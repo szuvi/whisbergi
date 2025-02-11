@@ -1,0 +1,8 @@
+## Interface: 40401
+## Title: WhisBergi
+## Notes: WhisBergi automatically whispers quest progress updates to selected friends in World of Warcraft.
+## Author: Szuvi
+## Version: 1.0
+## SavedVariables: WhisBergiDB
+
+WhisBergi.lua
