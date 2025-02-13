@@ -146,8 +146,7 @@ end
 ------------------------------
 SLASH_Bergi1 = "/whisbergi"
 SlashCmdList["WhisBergi"] = function(msg)
-    InterfaceOptionsFrame_OpenToCategory(WhisBergiOptionsPanel)
-    InterfaceOptionsFrame_OpenToCategory(WhisBergiOptionsPanel)
+    Settings.OpenToCategory("WhisBergi")
 end
 
 ------------------------------
