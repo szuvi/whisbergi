@@ -17,6 +17,7 @@ local defaults = {
 -- 2) Local Variables
 ------------------------------
 local previousObjectives = {} -- For detecting quest updates
+local settingdCategory = nil -- For the settings panel
 
 -- A helper to find a quest’s log index by scanning quest log for the given questID.
 -- In Cataclysm, the 8th return from GetQuestLogTitle(i) is the quest ID (which might be 0 if not available).
@@ -132,8 +133,8 @@ end)
 ------------------------------
 local function Bergi_RegisterOptionsPanel()
     if Settings and Settings.RegisterCanvasLayoutCategory then
-        local category = Settings.RegisterCanvasLayoutCategory(WhisBergiOptionsPanel, "WhisBergi")
-        Settings.RegisterAddOnCategory(category)
+        settingdCategory = Settings.RegisterCanvasLayoutCategory(WhisBergiOptionsPanel, "WhisBergi")
+        Settings.RegisterAddOnCategory(settingdCategory)
     elseif InterfaceOptions_AddCategory then
         InterfaceOptions_AddCategory(WhisBergiOptionsPanel)
     else
@@ -144,10 +145,10 @@ end
 ------------------------------
 -- 5) Slash Command
 ------------------------------
-SLASH_Bergi1 = "/whisbergi"
-SlashCmdList["WhisBergi"] = function(msg)
-    InterfaceOptionsFrame_OpenToCategory(WhisBergiOptionsPanel)
-    InterfaceOptionsFrame_OpenToCategory(WhisBergiOptionsPanel)
+SLASH_WHISBERGI1 = '/wbergi'
+SLASH_WHISBERGI2 = '/whisbergi'
+SlashCmdList["WHISBERGI"] = function(msg)
+    Settings.OpenToCategory(settingdCategory:GetID())
 end
 
 ------------------------------
