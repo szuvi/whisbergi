@@ -1,0 +1,7 @@
+# Build artifacts
+WhisBergi.zip
+WhisBergi/
+
+# OS files
+.DS_Store
+Thumbs.db

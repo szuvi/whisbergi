@@ -1,0 +1,49 @@
+name: Release WhisBergi
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v2
+
+      - name: Get Version
+        id: get_version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      - name: Create Addon Directory
+        run: |
+          mkdir -p WhisBergi
+          cp WhisBergi.lua WhisBergi/
+          cp WhisBergi.toc WhisBergi/
+          cp README.md WhisBergi/
+
+      - name: Create Archive
+        run: zip -r WhisBergi.zip WhisBergi
+
+      - name: Upload Release Asset
+        uses: actions/upload-release-asset@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          upload_url: ${{ github.event.release.upload_url }}
+          asset_path: ./WhisBergi.zip
+          asset_name: WhisBergi-${{ steps.get_version.outputs.VERSION }}.zip
+          asset_content_type: application/zip
+
+      - name: Upload to CurseForge
+        uses: itsmeow/curseforge-upload@v3
+        with:
+          file_path: WhisBergi.zip
+          game_endpoint: wow
+          game_versions: '4.4.2'
+          release_type: release
+          project_id: ${{ vars.CF_PROJECT_ID }}
+          token: ${{ secrets.CF_API_TOKEN }}
+          changelog: ${{ github.event.release.body }} # Use release notes as changelog
+          changelog_type: markdown
+          display_name: WhisBergi-${{ steps.get_version.outputs.VERSION }}
