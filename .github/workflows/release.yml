@@ -4,6 +4,10 @@ on:
   release:
     types: [published]
 
+permissions:
+  contents: write
+  packages: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -26,14 +30,10 @@ jobs:
         run: zip -r WhisBergi.zip WhisBergi
 
       - name: Upload Release Asset
-        uses: actions/upload-release-asset@v1
-        env:
-          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        uses: softprops/action-gh-release@v1
         with:
-          upload_url: ${{ github.event.release.upload_url }}
-          asset_path: ./WhisBergi.zip
-          asset_name: WhisBergi-${{ steps.get_version.outputs.VERSION }}.zip
-          asset_content_type: application/zip
+          files: WhisBergi.zip
+          fail_on_unmatched_files: true
 
       - name: Upload to CurseForge
         uses: itsmeow/curseforge-upload@v3
