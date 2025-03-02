@@ -1,33 +1,90 @@
 --[[
   WhisBergi.lua
-  A Cataclysm Classic (or older) addon to whisper multiple friends
-  whenever a chosen quest ID's objectives update.
+  A Cataclysm Classic addon that whispers quest progress updates to selected friends.
+  Usage:
+  - Select a quest in your quest log and click "Track in WhisBergi"
+  - Add friends in the options panel (comma-separated)
+  - Friends will receive whispers when quest objectives update
 
-  - /whisbergi to open the panel
-  - Panel under Esc → Interface → AddOns → WhisBergi
-]] ------------------------------
--- 1) SavedVariables Handling
+  Commands:
+  - /whisbergi or /wbergi - opens the options panel
+]]
+
 ------------------------------
+-- 1) Variables
+------------------------------
+-- Saved variables defaults
 local defaults = {
-    questID = 12345, -- A default quest ID
-    friends = {"YourFriendName"} -- Default friend list
+    questId = nil,
+    questTitle = "None",
+    friends = {} -- List of friends to whisper
 }
 
-------------------------------
--- 2) Local Variables
-------------------------------
-local previousObjectives = {} -- For detecting quest updates
-local settingdCategory = nil -- For the settings panel
+-- Local variables
+local previousObjectives = {} -- For detecting quest objective changes
+local settingdCategory = nil -- For the settings panel registration
+local isInitialized = false
 
--- A helper to find a quest’s log index by scanning quest log for the given questID.
--- In Cataclysm, the 8th return from GetQuestLogTitle(i) is the quest ID (which might be 0 if not available).
-local function GetQuestLogIndexByID(questID)
-    if not questID then
-        return nil
+-- Forward declare UI elements that need to be accessed by functions
+local trackedQuestText
+local trackButton
+local friendsEditBox
+
+------------------------------
+-- 4) UI Elements
+------------------------------
+-- Quest Log Button
+trackButton = CreateFrame("Button", "WhisBergiTrackButton", QuestLogFrame, "UIPanelButtonTemplate")
+trackButton:SetSize(140, 21)
+trackButton:SetText("Track in WhisBergi")
+trackButton:SetPoint("TOPRIGHT", QuestLogFrame, "TOPRIGHT", -40, -12)
+
+-- Options Panel
+local WhisBergiOptionsPanel = CreateFrame("Frame", "WhisBergiOptionsPanel", UIParent)
+WhisBergiOptionsPanel.name = "WhisBergi"
+
+local title = WhisBergiOptionsPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
+title:SetPoint("TOPLEFT", 16, -16)
+title:SetText("WhisBergi Settings")
+
+local trackedQuestLabel = WhisBergiOptionsPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+trackedQuestLabel:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -30)
+trackedQuestLabel:SetText("Currently tracked quest:")
+
+trackedQuestText = WhisBergiOptionsPanel:CreateFontString(nil, "OVERLAY", "GameFontHighlight")
+trackedQuestText:SetPoint("TOPLEFT", trackedQuestLabel, "BOTTOMLEFT", 0, -5)
+trackedQuestText:SetText("None")
+
+local friendsLabel = WhisBergiOptionsPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
+friendsLabel:SetPoint("TOPLEFT", trackedQuestText, "BOTTOMLEFT", 0, -20)
+friendsLabel:SetText("Friends to whisper (comma-separated):")
+
+friendsEditBox = CreateFrame("EditBox", "WhisBergiFriendsEditBox", WhisBergiOptionsPanel, "InputBoxTemplate")
+friendsEditBox:SetSize(300, 25)
+friendsEditBox:SetPoint("TOPLEFT", friendsLabel, "BOTTOMLEFT", 0, -8)
+friendsEditBox:SetAutoFocus(false)
+
+------------------------------
+-- 2) Helper Functions
+------------------------------
+-- Merges default values with saved variables
+local function MergeDefaults(saved, defaults)
+    if type(saved) ~= "table" then saved = {} end
+    if type(defaults) ~= "table" then return saved end
+    for k, v in pairs(defaults) do
+        if saved[k] == nil then
+            saved[k] = v
+        end
     end
+    return saved
+end
+
+-- Finds quest log index for a given quest ID
+local function GetQuestLogIndexByID(questID)
+    if not questID then return nil end
     local numEntries = GetNumQuestLogEntries()
     for i = 1, numEntries do
-        local questTitle, _, _, isHeader, _, _, _, thisQuestID = GetQuestLogTitle(i)
+        local _, _, _, isHeader, _, _, _, thisQuestID = GetQuestLogTitle(i)
         if (not isHeader) and thisQuestID == questID then
             return i
         end
@@ -35,58 +92,39 @@ local function GetQuestLogIndexByID(questID)
     return nil
 end
 
-------------------------------
--- 3) Main Config Panel
-------------------------------
-local WhisBergiOptionsPanel = CreateFrame("Frame", "WhisBergiOptionsPanel", UIParent)
-WhisBergiOptionsPanel.name = "WhisBergi"
-
--- Title text
-local title = WhisBergiOptionsPanel:CreateFontString(nil, "OVERLAY", "GameFontNormalLarge")
-title:SetPoint("TOPLEFT", 16, -16)
-title:SetText("WhisBergi Settings")
-
--- Quest ID label
-local questIDLabel = WhisBergiOptionsPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-questIDLabel:SetPoint("TOPLEFT", title, "BOTTOMLEFT", 0, -30)
-questIDLabel:SetText("Quest ID:")
-
--- Quest ID edit box
-local questIDEditBox = CreateFrame("EditBox", "WhisBergiQuestIDEditBox", WhisBergiOptionsPanel, "InputBoxTemplate")
-questIDEditBox:SetSize(100, 25)
-questIDEditBox:SetPoint("LEFT", questIDLabel, "RIGHT", 10, 0)
-questIDEditBox:SetAutoFocus(false)
-
--- This function will parse the contents of questIDEditBox and store in WhisBergiDB
-local function SaveQuestIDFromEditBox()
-    local newQuestID = tonumber(questIDEditBox:GetText())
-    if newQuestID then
-        WhisBergiDB.questID = newQuestID
+-- Updates the tracked quest display in options
+local function UpdateTrackedQuestDisplay()
+    if WhisBergiDB.questTitle then
+        trackedQuestText:SetText(WhisBergiDB.questTitle)
     else
-        -- If the user typed non-numeric, we can reset or ignore
-        WhisBergiDB.questID = nil
+        trackedQuestText:SetText("None")
     end
 end
 
--- Attach an OnTextChanged script so changes are saved immediately
-questIDEditBox:SetScript("OnTextChanged", function(self, userInput)
-    if userInput then
-        SaveQuestIDFromEditBox()
+-- Updates track button state based on quest selection
+local function UpdateTrackButton()
+    local selectedQuest = GetQuestLogSelection()
+    if selectedQuest then
+        local _, _, _, isHeader, _, _, _, questId = GetQuestLogTitle(selectedQuest)
+        if not isHeader then
+            if questId == WhisBergiDB.questId then
+                trackButton:SetEnabled(true)
+                trackButton:SetText("|cff00ff00Untrack in WhisBergi|r")
+            else
+                trackButton:SetEnabled(true)
+                trackButton:SetText("Track in WhisBergi")
+            end
+        else
+            trackButton:SetEnabled(false)
+            trackButton:SetText("Track in WhisBergi")
+        end
+    else
+        trackButton:SetEnabled(false)
+        trackButton:SetText("Track in WhisBergi")
     end
-end)
+end
 
--- Friends label
-local friendsLabel = WhisBergiOptionsPanel:CreateFontString(nil, "OVERLAY", "GameFontNormal")
-friendsLabel:SetPoint("TOPLEFT", questIDLabel, "BOTTOMLEFT", 0, -40)
-friendsLabel:SetText("Friends (comma-separated):")
-
--- Friends edit box
-local friendsEditBox = CreateFrame("EditBox", "WhisBergiFriendsEditBox", WhisBergiOptionsPanel, "InputBoxTemplate")
-friendsEditBox:SetSize(300, 25)
-friendsEditBox:SetPoint("TOPLEFT", friendsLabel, "BOTTOMLEFT", 0, -8)
-friendsEditBox:SetAutoFocus(false)
-
--- A helper function to parse the comma list and store in WhisBergiDB
+-- Parses and saves the friends list from the edit box
 local function SaveFriendsFromEditBox()
     local friendsText = friendsEditBox:GetText() or ""
     local friendsTable = {}
@@ -99,94 +137,91 @@ local function SaveFriendsFromEditBox()
     WhisBergiDB.friends = friendsTable
 end
 
--- Attach OnTextChanged so changes to the friends list are saved immediately
-friendsEditBox:SetScript("OnTextChanged", function(self, userInput)
-    if userInput then
-        SaveFriendsFromEditBox()
-    end
-end)
+-- Updates quest titles in the quest log to show tracking indicator
+local function UpdateQuestLogDisplay()
+    if not WhisBergiDB.questId then return end
 
-------------------------------
--- 3a) Panel Refresh
-------------------------------
--- We’ll just refresh the text fields from WhisBergiDB any time the panel is shown.
-WhisBergiOptionsPanel:SetScript("OnShow", function(self)
-    if not WhisBergiDB then
-        WhisBergiDB = {}
-    end
-    if WhisBergiDB.questID == nil then
-        WhisBergiDB.questID = defaults.questID
-    end
-    if not WhisBergiDB.friends then
-        WhisBergiDB.friends = {unpack(defaults.friends)}
+    -- First, clean up any existing tracking icons
+    for i = 1, GetNumQuestLogEntries() do
+        local questLogTitleFrame = _G["QuestLogTitle" .. i]
+        if questLogTitleFrame and questLogTitleFrame.whisbergiIcon then
+            questLogTitleFrame.whisbergiIcon:Hide()
+        end
     end
 
-    -- Display the current questID
-    questIDEditBox:SetText(tostring(WhisBergiDB.questID))
-
-    -- Display the current friend list as a comma-separated string
-    friendsEditBox:SetText(table.concat(WhisBergiDB.friends, ", "))
-end)
-
-------------------------------
--- 4) Settings Registration
-------------------------------
-local function Bergi_RegisterOptionsPanel()
-    if Settings and Settings.RegisterCanvasLayoutCategory then
-        settingdCategory = Settings.RegisterCanvasLayoutCategory(WhisBergiOptionsPanel, "WhisBergi")
-        Settings.RegisterAddOnCategory(settingdCategory)
-    elseif InterfaceOptions_AddCategory then
-        InterfaceOptions_AddCategory(WhisBergiOptionsPanel)
-    else
-        print("|cffff0000[Bergi]|r: No Interface Options API found—no in-game config panel.")
+    -- Add icon to the currently tracked quest
+    local questLogIndex = GetQuestLogIndexByID(WhisBergiDB.questId)
+    if questLogIndex then
+        local questLogTitleFrame = _G["QuestLogTitle" .. questLogIndex]
+        if questLogTitleFrame then
+            if not questLogTitleFrame.whisbergiIcon then
+                local icon = questLogTitleFrame:CreateTexture(nil, "OVERLAY")
+                icon:SetSize(16, 16)
+                icon:SetPoint("RIGHT", questLogTitleFrame, "RIGHT", -5, 0)
+                icon:SetTexture("Interface\\MINIMAP\\TRACKING\\Target")
+                questLogTitleFrame.whisbergiIcon = icon
+            end
+            questLogTitleFrame.whisbergiIcon:Show()
+        end
     end
 end
 
 ------------------------------
--- 5) Slash Command
+-- 3) Quest Tracking Logic
 ------------------------------
-SLASH_WHISBERGI1 = '/wbergi'
-SLASH_WHISBERGI2 = '/whisbergi'
-SlashCmdList["WHISBERGI"] = function(msg)
-    Settings.OpenToCategory(settingdCategory:GetID())
+-- Updates the currently tracked quest when selected in quest log
+local function UpdateTrackedQuest()
+    local selectedQuest = GetQuestLogSelection()
+    if selectedQuest then
+        local questTitle, _, _, isHeader, _, _, _, questId = GetQuestLogTitle(selectedQuest)
+        if not isHeader and questId then
+            if questId == WhisBergiDB.questId then
+                -- Untrack the quest
+                WhisBergiDB.questId = nil
+                WhisBergiDB.questTitle = "None"
+                print("|cff00ff00[WhisBergi]|r Stopped tracking: " .. questTitle)
+            else
+                -- Track the quest
+                WhisBergiDB.questId = questId
+                WhisBergiDB.questTitle = questTitle
+                print("|cff00ff00[WhisBergi]|r Now tracking: " .. questTitle)
+            end
+            UpdateTrackedQuestDisplay()
+            UpdateTrackButton()
+        end
+    end
 end
 
-------------------------------
--- 6) Quest-Tracking Logic
-------------------------------
+-- Checks for quest objective updates and sends whispers
 local function CheckQuestProgressUpdate()
-    local questID = WhisBergiDB.questID
-    if not questID then
-        return
-    end
+    if not WhisBergiDB.questId then return end
 
-    local questLogIndex = GetQuestLogIndexByID(questID)
+    local questLogIndex = GetQuestLogIndexByID(WhisBergiDB.questId)
     if not questLogIndex then
+        -- Quest not found in log, but we'll keep tracking it
+        -- in case it becomes available again
         return
     end
 
     local questTitle, _, _, isHeader = GetQuestLogTitle(questLogIndex)
-    if not questTitle or isHeader then
-        return
-    end
+    if not questTitle or isHeader then return end
 
     local numLeaderboards = GetNumQuestLeaderBoards(questLogIndex)
-    if not numLeaderboards or numLeaderboards == 0 then
-        return
-    end
+    if not numLeaderboards or numLeaderboards == 0 then return end
 
+    -- Get current objective states
     local newObjectives = {}
     for i = 1, numLeaderboards do
-        local leaderboardText, objectiveType, finished = GetQuestLogLeaderBoard(i, questLogIndex)
+        local leaderboardText = GetQuestLogLeaderBoard(i, questLogIndex)
         newObjectives[i] = leaderboardText or ""
     end
 
+    -- Check for changes and send whispers
     for i, newVal in ipairs(newObjectives) do
         if previousObjectives[i] ~= newVal then
-            -- Something changed
             if WhisBergiDB.friends and #WhisBergiDB.friends > 0 then
                 for _, friendName in ipairs(WhisBergiDB.friends) do
-                    SendChatMessage(string.format("%s", newVal), "WHISPER", nil, friendName)
+                    SendChatMessage(newVal, "WHISPER", nil, friendName)
                 end
             end
         end
@@ -196,26 +231,32 @@ local function CheckQuestProgressUpdate()
 end
 
 ------------------------------
--- 7) Event Handling
+-- 5) Event Handling and UI Setup
 ------------------------------
+-- Set up button click handler after all functions are defined
+trackButton:SetScript("OnClick", UpdateTrackedQuest)
+
+-- Register events
 local WhisBergiFrame = CreateFrame("Frame")
 WhisBergiFrame:RegisterEvent("ADDON_LOADED")
 WhisBergiFrame:RegisterEvent("VARIABLES_LOADED")
 WhisBergiFrame:RegisterEvent("QUEST_LOG_UPDATE")
 
+-- Event handler
 WhisBergiFrame:SetScript("OnEvent", function(self, event, arg1)
     if event == "ADDON_LOADED" and arg1 == "WhisBergi" then
-        if not WhisBergiDB then
-            WhisBergiDB = {}
-        end
-        if WhisBergiDB.questID == nil then
-            WhisBergiDB.questID = defaults.questID
-        end
-        if not WhisBergiDB.friends then
-            WhisBergiDB.friends = {unpack(defaults.friends)}
+        -- Initialize saved variables
+        WhisBergiDB = MergeDefaults(WhisBergiDB, defaults)
+
+        -- Register options panel
+        if Settings and Settings.RegisterCanvasLayoutCategory then
+            settingdCategory = Settings.RegisterCanvasLayoutCategory(WhisBergiOptionsPanel, "WhisBergi")
+            Settings.RegisterAddOnCategory(settingdCategory)
+        elseif InterfaceOptions_AddCategory then
+            InterfaceOptions_AddCategory(WhisBergiOptionsPanel)
         end
 
-        Bergi_RegisterOptionsPanel()
+        UpdateTrackedQuestDisplay()
 
     elseif event == "VARIABLES_LOADED" then
         if not IsAddOnLoaded("Blizzard_OptionsUI") then
@@ -224,5 +265,34 @@ WhisBergiFrame:SetScript("OnEvent", function(self, event, arg1)
 
     elseif event == "QUEST_LOG_UPDATE" then
         CheckQuestProgressUpdate()
+        UpdateTrackedQuestDisplay()
+        if QuestLogFrame and QuestLogFrame:IsVisible() then
+            UpdateTrackButton()
+        end
     end
 end)
+
+-- Hook quest log updates
+hooksecurefunc("QuestLog_Update", UpdateTrackButton)
+
+-- Update options panel when shown
+WhisBergiOptionsPanel:SetScript("OnShow", function(self)
+    UpdateTrackedQuestDisplay()
+    friendsEditBox:SetText(table.concat(WhisBergiDB.friends, ", "))
+end)
+
+-- Save friends list when edited
+friendsEditBox:SetScript("OnTextChanged", function(self, userInput)
+    if userInput then
+        SaveFriendsFromEditBox()
+    end
+end)
+
+------------------------------
+-- 6) Slash Commands
+------------------------------
+SLASH_WHISBERGI1 = '/wbergi'
+SLASH_WHISBERGI2 = '/whisbergi'
+SlashCmdList["WHISBERGI"] = function(msg)
+    Settings.OpenToCategory(settingdCategory:GetID())
+end
